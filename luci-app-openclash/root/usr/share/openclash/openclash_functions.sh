@@ -116,4 +116,3 @@ config_get_oc(){
 config_get_oc_bool(){
 	config_get_bool "$1" "config" "${2:-$1}" $3
 }
-diff --git a/luci-app-openclash/root/usr/share/openclash/clash_version.sh b/luci-app-openclash/root/usr/share/openclash/clash_version.sh

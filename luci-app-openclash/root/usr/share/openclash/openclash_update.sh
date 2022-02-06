@@ -17,101 +17,115 @@ OP_LV="$(sed -n 1p "$LAST_OPVER" 2>"/dev/null" | awk -F '-' '{print $1}' | awk -
 
 config_load "$_CFG_NAME"
 config_get_oc RELEASE_BRANCH "release_branch" "master"
+config_get_oc_bool RELOAD_CONFIG "config_reload"
 
 SET_LOCK "878" "_update"
 
-if [ "$(expr "$OP_LV" \> "$OP_CV")" -eq "1" ] && [ -f "$LAST_OPVER" ]; then
-   LOG_OUT "Start Downloading【OpenClash - v$LAST_VER】..."
-   if [ "$RELEASE_BRANCH" = "dev" ]; then
-      CURL_GET_CORE "$_REPO_URL_RAW_PREFIX/$RELEASE_BRANCH/luci-app-openclash_$LAST_VER_all.ipk" -o /tmp/openclash.ipk
-   else
-      if pidof clash >"/dev/null"; then
-         CURL_GET_CORE "$_REPO_URL_PREFIX/releases/download/v$LAST_VER/luci-app-openclash_$LAST_VER_all.ipk" -o /tmp/openclash.ipk
-      fi
-   fi
+TMP_OC_FILE="/tmp/openclash.ipk"
+if [ -f "$LAST_OPVER" ] && [ "$OP_LV" -gt "$OP_CV" ]; then
+	LOG_OUT "Downloading [OpenClash - v$LAST_VER]..."
+	if [ "$RELEASE_BRANCH" = "dev" ]; then
+		CURL_GET_CORE "$_REPO_URL_RAW_PREFIX/$RELEASE_BRANCH/luci-app-openclash_${LAST_VER}_all.ipk" -o "$TMP_OC_FILE"
+	else
+		! IS_CLASH_RUNNING || CURL_GET_CORE "$_REPO_URL_PREFIX/releases/download/v$LAST_VER/luci-app-openclash_${LAST_VER}_all.ipk" -o "$TMP_OC_FILE"
+	fi
+
+	if [ "$?" -ne "0" ] || ! IS_CLASH_RUNNING; then
+		CURL_GET_CORE "https://cdn.jsdelivr.net/gh/$_REPO_NAME@$RELEASE_BRANCH/luci-app-openclash_${LAST_VER}_all.ipk" -o "$TMP_OC_FILE"
+	fi
    
-   if [ "$?" -ne "0" ] || ! pidof clash >"/dev/null"; then
-      CURL_GET_CORE "https://cdn.jsdelivr.net/gh/$_REPO_NAME@$RELEASE_BRANCH/luci-app-openclash_$LAST_VER_all.ipk" -o /tmp/openclash.ipk
-   fi
-   
-   if [ "$?" -eq "0" ] && [ -s "/tmp/openclash.ipk" ]; then
-      LOG_OUT "【OpenClash - v$LAST_VER】Download Successful, Start Pre Update Test..."
-      opkg install /tmp/openclash.ipk --noaction >>$LOG_FILE
-      if [ "$?" -ne "0" ]; then
-         LOG_OUT "【OpenClash - v$LAST_VER】Pre Update Test Failed, The File is Saved in /tmp/opencrash.ipk, Please Try to Update Manually!"
-         sleep 3
-         LOG_CLEAN
-         DEL_LOCK "878" "_update"
-         exit 0
-      fi
-      LOG_OUT "【OpenClash - v$LAST_VER】Pre Update Test Passed, Ready to Update and Please Do not Refresh The Page and Other Operations..."
-      cat > /tmp/openclash_update.sh <<"EOF"
-#!/bin/sh
-START_LOG="/tmp/openclash_start.log"
-LOG_FILE="/tmp/openclash.log"
-LOGTIME=$(date "+%Y-%m-%d %H:%M:%S")
+	if [ "$?" -eq "0" ] && [ -s "$TMP_OC_FILE" ]; then
+		LOG_OUT "[OpenClash - v$LAST_VER] is downloaded successfully, start pre-update testing..."
 		
-LOG_OUT()
-{
-	if [ -n "${1}" ]; then
-		echo -e "${1}" > $START_LOG
-		echo -e "${LOGTIME} ${1}" >> $LOG_FILE
+		if ! opkg install --noaction "$TMP_OC_FILE" >> "$LOG_FILE" 2>&1; then
+			LOG_OUT "[OpenClash - v$LAST_VER] Pre-update testing is failed. The file is saved in \"/tmp/opencrash.ipk\". Please try to update me manually!"
+			sleep 3
+			LOG_CLEAN
+
+			DEL_LOCK "878" "_update"
+			exit 0
+		fi
+
+		LOG_OUT "[OpenClash - v$LAST_VER] Pre-update testing is passed. Ready to update and please do not refresh the page or do any other operations!"
+		cat > "/tmp/openclash_update.sh" <<-EOF
+		#!/bin/sh
+		START_LOG="$START_LOG"
+		LOG_FILE="$LOG_FILE"
+		LOGTIME="\$(date "+%Y-%m-%d %H:%M:%S")"
+				
+		LOG_OUT()
+		{
+			if [ -n "\$1" ]; then
+				echo -e "\$1" > "\$START_LOG"
+				echo -e "\$LOGTIME \$1" >> "\$LOG_FILE"
+			fi
+		}
+
+		LOG_CLEAN()
+		{
+			echo "" > "\$START_LOG"
+		}
+
+		uci set $_CFG_NAME.config.enable=0
+		uci commit $_CFG_NAME
+		LOG_OUT "Uninstalling the old version. Please do not refresh the page or do any other operations!"
+		opkg remove --force-depends --force-remove luci-app-openclash
+
+		LOG_OUT "Installing the new version. Please do not refresh the page or do any other operations!"
+		if opkg install "$TMP_OC_FILE"; then
+			rm -f "$TMP_OC_FILE"
+			LOG_OUT "OpenClash is update successfully. Restart service..."
+			sleep 3
+
+			uci set $_CFG_NAME.config.enable=1
+			uci commit $_CFG_NAME
+
+			/etc/init.d/$_GLOBAL_NAME restart 2>"/dev/null"
+		else
+			LOG_OUT "Failed to update OpenClash. The file is saved in \"/tmp/opencrash.ipk\". Please try to update me manually!"
+			sleep 3
+			LOG_CLEAN
+		fi
+		EOF
+
+		chmod 4755 "/tmp/openclash_update.sh"
+		nohup "/tmp/openclash_update.sh" &
+		wait
+		rm -f "/tmp/openclash_update.sh"
+	else
+		rm -rf "$TMP_OC_FILE"
+
+		LOG_OUT "[OpenClash - v$LAST_VER] Failed to download. Please check your network and try again later."
+		sleep 3
+		LOG_CLEAN
+
+		RELOAD_CHECK=1
+		if [ "$(uci get openclash.config.config_reload 2>"/dev/null")" -eq 0 ]; then
+			uci set openclash.config.config_reload=1
+			uci commit openclash
+			/etc/init.d/openclash restart 2>"/dev/null"
+		fi
+	fi
+else
+	if [ ! -f "$LAST_OPVER" ]; then
+		LOG_OUT "Failed to get the latest version. Please try again later..."
+		sleep 3
+		LOG_CLEAN
+   else
+		LOG_OUT "OpenClash is up-to-date."
+		sleep 3
+		LOG_CLEAN
+	fi
+
+	RELOAD_CHECK=1
+fi
+
+[ -z "$RELOAD_CHECK" ] || {
+	if [ "$RELOAD_CONFIG" -eq "0" ]; then
+		uci set "$_CFG_NAME.config.config_reload"="1"
+		uci commit "$_CFG_NAME"
+		/etc/init.d/"$_GLOBAL_NAME" restart 2>"/dev/null"
 	fi
 }
 
-LOG_CLEAN()
-{
-	echo "" > $START_LOG
-}
-
-LOG_OUT "Uninstalling The Old Version, Please Do not Refresh The Page or Do Other Operations..."
-uci set openclash.config.enable=0
-uci commit openclash
-opkg remove --force-depends --force-remove luci-app-openclash
-LOG_OUT "Installing The New Version, Please Do Not Refresh The Page or Do Other Operations..."
-opkg install /tmp/openclash.ipk
-if [ "$?" -eq "0" ]; then
-   rm -rf /tmp/openclash.ipk >"/dev/null" 2>&1
-   LOG_OUT "OpenClash Update Successful, About To Restart!"
-   sleep 3
-   uci set openclash.config.enable=1
-   uci commit openclash
-   /etc/init.d/openclash restart 2>"/dev/null"
-else
-   LOG_OUT "OpenClash Update Failed, The File is Saved in /tmp/openclash.ipk, Please Try to Update Manually!"
-   sleep 3
-   LOG_CLEAN
-fi
-EOF
-   chmod 4755 /tmp/openclash_update.sh
-   nohup /tmp/openclash_update.sh &
-   wait
-   rm -rf /tmp/openclash_update.sh
-   else
-      LOG_OUT "【OpenClash - v$LAST_VER】Download Failed, Please Check The Network or Try Again Later!"
-      rm -rf /tmp/openclash.ipk >"/dev/null" 2>&1
-      sleep 3
-      LOG_CLEAN
-      if [ "$(uci get openclash.config.config_reload 2>"/dev/null")" -eq 0 ]; then
-         uci set openclash.config.config_reload=1
-         uci commit openclash
-      	 /etc/init.d/openclash restart 2>"/dev/null"
-      fi
-   fi
-else
-   if [ ! -f "$LAST_OPVER" ]; then
-      LOG_OUT "Failed to Get Version Information, Please Try Again Later..."
-      sleep 3
-      LOG_CLEAN
-   else
-      LOG_OUT "OpenClash Has not Been Updated, Stop Continuing!"
-      sleep 3
-      LOG_CLEAN
-   fi
-   if [ "$(uci get openclash.config.config_reload 2>"/dev/null")" -eq 0 ]; then
-      uci set openclash.config.config_reload=1
-      uci commit openclash
-      /etc/init.d/openclash restart 2>"/dev/null"
-   fi
-fi
 DEL_LOCK "878" "_update"

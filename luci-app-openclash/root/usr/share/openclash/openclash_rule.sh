@@ -55,7 +55,7 @@ yml_other_rules_dl() {
 		elif [ ! -f "$TMP_RULES" ]; then
 			RULE_ERROR_LOG="Error: [$rule_name] Rule file format validation is failed. Please try again."
 		elif ! "$(ruby_read "$TMP_RULES" ".key?('rules')")"; then
-			RULE_ERROR_LOG="Error: New \"Others Rules\" [$rule_name] has no \"rules\" field, skipping..."
+			RULE_ERROR_LOG="Error: New 3rd-party rules [$rule_name] has no \"rules\" field, skipping..."
 		# 校验是否含有新策略组
 		elif ! ruby -ryaml -E UTF-8 -e "
 				Value = YAML.load_file('$_RES_PATH/res/${rule_name}.yaml');
@@ -64,7 +64,7 @@ yml_other_rules_dl() {
 				NEW_GROUP = Value_1['rules'].collect{|x| x.split(',')[2] or x.split(',')[1]}.uniq;
 				puts (OLD_GROUP | NEW_GROUP).eql?(OLD_GROUP)
 				" >"/dev/null" 2>&1 ; then
-			RULE_ERROR_LOG="Error: New \"Others Rules\" [$rule_name] has incompatible \"Proxy-Group\", skipping... Please wait for new OpenClash version."
+			RULE_ERROR_LOG="Error: New 3rd-party rules [$rule_name] has incompatible \"Proxy-Group\", skipping... Please wait for new OpenClash version."
 		fi
 		[ -z "$RULE_ERROR_LOG" ] || {
 			rm -f "$TMP_RULES"
