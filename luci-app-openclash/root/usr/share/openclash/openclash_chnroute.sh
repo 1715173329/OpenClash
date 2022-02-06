@@ -1,98 +1,89 @@
 #!/bin/sh
-. /usr/share/openclash/openclash_ps.sh
-. /usr/share/openclash/log.sh
+. /usr/share/openclash/openclash_functions.sh
 
-   set_lock() {
-      exec 879>"/tmp/lock/openclash_chn.lock" 2>/dev/null
-      flock -x 879 2>/dev/null
-   }
+config_load "$_CFG_NAME"
+config_get_oc china_ip_route
+config_get_oc china_ip6_route
+config_get_oc chnr_download_url "chnr_custom_url" "https://ispip.clang.cn/all_cn.txt"
+config_get_oc chnr6_download_url "chnr6_custom_url" "https://ispip.clang.cn/all_cn_ipv6.txt"
+config_get_oc disable_udp_quic
+config_get_oc small_flash_memory
 
-   del_lock() {
-      flock -u 879 2>/dev/null
-      rm -rf "/tmp/lock/openclash_chn.lock"
-   }
+SET_LOCK "879" "_chn"
 
-   china_ip_route=$(uci get openclash.config.china_ip_route 2>/dev/null)
-   china_ip6_route=$(uci get openclash.config.china_ip6_route 2>/dev/null)
-   CHNR_CUSTOM_URL=$(uci get openclash.config.chnr_custom_url 2>/dev/null)
-   CHNR6_CUSTOM_URL=$(uci get openclash.config.chnr6_custom_url 2>/dev/null)
-   disable_udp_quic=$(uci get openclash.config.disable_udp_quic 2>/dev/null)
-   small_flash_memory=$(uci get openclash.config.small_flash_memory 2>/dev/null)
-   set_lock
-   
-   if [ "$small_flash_memory" != "1" ]; then
-   	  chnr_path="/etc/openclash/china_ip_route.ipset"
-   	  chnr6_path="/etc/openclash/china_ip6_route.ipset"
-   	  mkdir -p /etc/openclash
-   else
-   	  chnr_path="/tmp/etc/openclash/china_ip_route.ipset"
-   	  chnr6_path="/tmp/etc/openclash/china_ip6_route.ipset"
-   	  mkdir -p /tmp/etc/openclash
-   fi
+[ "$small_flash_memory" -ne "1" ] || DIR_PREFIX="/tmp"
+chnroute_path="${DIR_PREFIX}${_CFG_PATH}"
+mkdir -p "$chnroute_path"
 
-   LOG_OUT "Start Downloading The Chnroute Cidr List..."
-   if [ -z "$CHNR_CUSTOM_URL" ]; then
-      if pidof clash >/dev/null; then
-         curl -sL --connect-timeout 10 --retry 2 https://ispip.clang.cn/all_cn.txt -o /tmp/china_ip_route.txt >/dev/null 2>&1
-      fi
-      if [ "$?" -ne "0" ] || ! pidof clash >/dev/null; then
-         curl -sL --connect-timeout 10 --retry 2 https://ispip.clang.cn/all_cn_cidr.txt -o /tmp/china_ip_route.txt >/dev/null 2>&1
-      fi
-   else
-      curl -sL --connect-timeout 10 --retry 2 "$CHNR_CUSTOM_URL" -o /tmp/china_ip_route.txt >/dev/null 2>&1
-   fi
-   if [ "$?" -eq "0" ] && [ -s "/tmp/china_ip_route.txt" ]; then
-      LOG_OUT "Chnroute Cidr List Download Success, Check Updated..."
-      #预处理
-      echo "create china_ip_route hash:net family inet hashsize 1024 maxelem 1000000" >/tmp/china_ip_route.list
-      awk '!/^$/&&!/^#/{printf("add china_ip_route %s'" "'\n",$0)}' /tmp/china_ip_route.txt >>/tmp/china_ip_route.list
-      cmp -s /tmp/china_ip_route.list "$chnr_path"
-      if [ "$?" -ne "0" ]; then
-         LOG_OUT "Chnroute Cidr List Has Been Updated, Starting To Replace The Old Version..."
-         mv /tmp/china_ip_route.list "$chnr_path" >/dev/null 2>&1
-         if [ "$china_ip_route" -eq 1 ] || [ "$disable_udp_quic" -eq 1 ]; then
-            [ "$(unify_ps_prevent)" -eq 0 ] && /etc/init.d/openclash restart >/dev/null 2>&1 &
-         fi
-         LOG_OUT "Chnroute Cidr List Update Successful!"
-         sleep 3
-      else
-         LOG_OUT "Updated Chnroute Cidr List No Change, Do Nothing..."
-         sleep 3
-      fi
-   else
-      LOG_OUT "Chnroute Cidr List Update Error, Please Try Again Later..."
-      sleep 3
-   fi
-   
-   #ipv6
-   LOG_OUT "Start Downloading The Chnroute6 Cidr List..."
-   if [ -z "$CHNR6_CUSTOM_URL" ]; then
-      curl -sL --connect-timeout 10 --retry 2 https://ispip.clang.cn/all_cn_ipv6.txt -o /tmp/china_ip6_route.txt >/dev/null 2>&1
-   else
-      curl -sL --connect-timeout 10 --retry 2 "$CHNR6_CUSTOM_URL" -o /tmp/china_ip6_route.txt >/dev/null 2>&1
-   fi
-   if [ "$?" -eq "0" ] && [ -s "/tmp/china_ip6_route.txt" ]; then
-      LOG_OUT "Chnroute6 Cidr List Download Success, Check Updated..."
-      #预处理
-      echo "create china_ip6_route hash:net family inet6 hashsize 1024 maxelem 1000000" >/tmp/china_ip6_route.list
-      awk '!/^$/&&!/^#/{printf("add china_ip6_route %s'" "'\n",$0)}' /tmp/china_ip6_route.txt >>/tmp/china_ip6_route.list
-      cmp -s /tmp/china_ip6_route.list "$chnr6_path"
-      if [ "$?" -ne "0" ]; then
-         LOG_OUT "Chnroute6 Cidr List Has Been Updated, Starting To Replace The Old Version..."
-         mv /tmp/china_ip6_route.list "$chnr6_path" >/dev/null 2>&1
-         if [ "$china_ip6_route" -eq 1 ] || [ "$disable_udp_quic" -eq 1 ]; then
-            [ "$(unify_ps_prevent)" -eq 0 ] && /etc/init.d/openclash restart >/dev/null 2>&1 &
-         fi
-         LOG_OUT "Chnroute6 Cidr List Update Successful!"
-         sleep 3
-      else
-         LOG_OUT "Updated Chnroute6 Cidr List No Change, Do Nothing..."
-         sleep 3
-      fi
-   else
-      LOG_OUT "Chnroute6 Cidr List Update Error, Please Try Again Later..."
-      sleep 3
-   fi
-   rm -rf /tmp/china_ip*_route* >/dev/null 2>&1
-   SLOG_CLEAN
-   del_lock
+# IPv4
+LOG_OUT "Downloading chroute data..."
+
+chnr_path="$chnroute_path/china_ip_route.ipset"
+tmp_chnr_path="/tmp/china_ip_route"
+
+if CURL_GET_FILE "$chnr_download_url" -o "$tmp_chnr_path.txt" && [ -s "$tmp_chnr_path.txt" ]; then
+	LOG_OUT "Succeeded in downloading chnroute data."
+
+	# 预处理
+	echo "create china_ip_route hash:net family inet hashsize 1024 maxelem 1000000" > "$tmp_chnr_path.list"
+	awk '!/^$/&&!/^#/{printf("add china_ip_route %s'" "'\n",$0)}' "$tmp_chnr_path.txt" >> "$tmp_chnr_path.list"
+
+	if ! cmp -s "$tmp_chnr_path.list" "$chnr_path"; then
+		LOG_OUT "chnroute data is updated, replacing the old one..."
+		mv -f "$tmp_chnr_path" "$chnr_path" >"/dev/null" 2>&1
+
+		if [ "$china_ip_route" -eq 1 ] || [ "$disable_udp_quic" -eq 1 ]; then
+			NEED_RESTART=1
+		fi
+
+		LOG_OUT "chnroute data is successfully updated!"
+	else
+		LOG_OUT "chnroute data is up-to-date."
+	fi
+
+	rm -f "$tmp_chnr_path.txt" "$tmp_chnr_path.list"
+else
+	LOG_OUT "Failed to fetch chnroute data, please try again later."
+fi
+sleep 3
+
+# IPv6
+LOG_OUT "Downloading chnroute6 data..."
+
+chnr6_path="$chnroute_path/china_ip6_route.ipset"
+tmp_chnr6_path="/tmp/china_ip6_route"
+
+if CURL_GET_FILE "$chnr6_download_url" -o "$tmp_chnr6_path.txt" && [ -s "$tmp_chnr6_path.txt" ]; then
+	LOG_OUT "Succeeded in downloading chnroute6 data."
+
+	# 预处理
+	echo "create china_ip6_route hash:net family inet6 hashsize 1024 maxelem 1000000" > "$tmp_chnr6_path.list"
+	awk '!/^$/&&!/^#/{printf("add china_ip6_route %s'" "'\n",$0)}' "$tmp_chnr6_path.txt" >> "$tmp_chnr6_path.list"
+
+	if ! cmp -s "$tmp_chnr6_path.list" "$chnr6_path"; then
+		LOG_OUT "chnroute6 data is updated, replacing the old one..."
+		mv -f "$tmp_chnr6_path.list" "$chnr6_path" >"/dev/null" 2>&1
+
+		if [ "$china_ip6_route" -eq 1 ] || [ "$disable_udp_quic" -eq 1 ]; then
+			NEED_RESTART=1
+		fi
+
+		LOG_OUT "chnroute6 data is successfully updated!"
+	else
+		LOG_OUT "chnroute6 data is up-to-date."
+	fi
+
+	rm -f "$tmp_chnr6_path.txt" "$tmp_chnr6_path.list"
+else
+	LOG_OUT "Failed to fetch chnroute6 data, please try again later."
+fi
+
+if [ "$NEED_RESTART" = "1" ] && ! IS_INIT_RUNNING; then
+	/etc/init.d/$_GLOBAL_NAME restart >"/dev/null" 2>&1 &
+ fi
+
+sleep 3
+
+LOG_CLEAN
+
+DEL_LOCK "879" "_chn"

@@ -1,102 +1,91 @@
 #!/bin/sh
-. /usr/share/openclash/log.sh
-. /lib/functions.sh
+. /usr/share/openclash/openclash_functions.sh
 
 urlencode() {
-   local data
-   if [ "$#" -eq 1 ]; then
-      data=$(curl -s -o /dev/null -w %{url_effective} --get --data-urlencode "$1" "")
-      if [ ! -z "$data" ]; then
-         echo "$(echo ${data##/?} |sed 's/\//%2f/g' |sed 's/:/%3a/g' |sed 's/?/%3f/g' |sed 's/(/%28/g' |sed 's/)/%29/g' |sed 's/\^/%5e/g' |sed 's/=/%3d/g' |sed 's/|/%7c/g' |sed 's/+/%20/g')"
-      fi
-   fi
+	local data
+	if [ "$#" -eq 1 ]; then
+		data="$(curl -s -o /dev/null -w %{url_effective} --get --data-urlencode "$1" "")"
+		[ ! -z "$data" ] || echo "$(echo ${data##/?} |sed -e 's/\//%2f/g' -e 's/:/%3a/g' -e 's/?/%3f/g' -e 's/(/%28/g' -e 's/)/%29/g' -e 's/\^/%5e/g' -e 's/=/%3d/g' -e 's/|/%7c/g' -e 's/+/%20/g')"
+	fi
 }
 
-   RULE_FILE_NAME="$1"
-   RELEASE_BRANCH=$(uci -q get openclash.config.release_branch || echo "master")
-   if [ "$1" == "netflix_domains" ]; then
-      DOWNLOAD_PATH="https://raw.githubusercontent.com/vernesong/OpenClash/$RELEASE_BRANCH/luci-app-openclash/root/usr/share/openclash/res/Netflix_Domains.list"
-      DOWNLOAD_PATH2="https://cdn.jsdelivr.net/gh/vernesong/OpenClash@$RELEASE_BRANCH/luci-app-openclash/root/usr/share/openclash/res/Netflix_Domains.list"
-      RULE_FILE_DIR="/usr/share/openclash/res/Netflix_Domains.list"
-      RULE_FILE_NAME="Netflix_Domains"
-      RULE_TYPE="netflix"
-   elif [ "$1" == "disney_domains" ]; then
-      DOWNLOAD_PATH="https://raw.githubusercontent.com/vernesong/OpenClash/$RELEASE_BRANCH/luci-app-openclash/root/usr/share/openclash/res/Disney_Plus_Domains.list"
-      DOWNLOAD_PATH2="https://cdn.jsdelivr.net/gh/vernesong/OpenClash@$RELEASE_BRANCH/luci-app-openclash/root/usr/share/openclash/res/Disney_Plus_Domains.list"
-      RULE_FILE_DIR="/usr/share/openclash/res/Disney_Plus_Domains.list"
-      RULE_FILE_NAME="Disney_Plus_Domains"
-      RULE_TYPE="disney"
-   elif [ -z "$(grep "$RULE_FILE_NAME" /usr/share/openclash/res/rule_providers.list 2>/dev/null)" ]; then
-      DOWNLOAD_PATH=$(grep -F "$RULE_FILE_NAME" /usr/share/openclash/res/game_rules.list |awk -F ',' '{print $2}' 2>/dev/null)
-      RULE_FILE_DIR="/etc/openclash/game_rules/$RULE_FILE_NAME"
-      RULE_TYPE="game"
-   else
-      DOWNLOAD_PATH=$(echo "$RULE_FILE_NAME" |awk -F ',' '{print $1$2}' 2>/dev/null)
-      RULE_FILE_NAME=$(grep -F "$RULE_FILE_NAME" /usr/share/openclash/res/rule_providers.list |awk -F ',' '{print $NF}' 2>/dev/null)
-      RULE_FILE_DIR="/etc/openclash/rule_provider/$RULE_FILE_NAME"
-      RULE_TYPE="provider"
-   fi
+config_load "$_CFG_NAME"
+config_get_oc RELEASE_BRANCH "release_branch" "master"
 
-   if [ -z "$DOWNLOAD_PATH" ]; then
-      LOG_OUT "Rule File【$RULE_FILE_NAME】Download Error!" && SLOG_CLEAN
-      return 0
-   fi
+RULE_FILE_NAME="$1"
+if [ "$1" = "netflix_domains" ]; then
+	DOWNLOAD_PATH="$_REPO_URL_RAW_PREFIX/$RELEASE_BRANCH/luci-app-openclash/root/usr/share/openclash/res/Netflix_Domains.list"
+	DOWNLOAD_PATH2="https://cdn.jsdelivr.net/gh/$_REPO_NAME@$RELEASE_BRANCH/luci-app-openclash/root/usr/share/openclash/res/Netflix_Domains.list"
+	RULE_FILE_PATH="$_RES_PATH/res/Netflix_Domains.list"
+	RULE_FILE_NAME="Netflix_Domains"
+	RULE_TYPE="netflix"
+elif [ "$1" = "disney_domains" ]; then
+	DOWNLOAD_PATH="$_REPO_URL_RAW_PREFIX/$RELEASE_BRANCH/luci-app-openclash/root/usr/share/openclash/res/Disney_Plus_Domains.list"
+	DOWNLOAD_PATH2="https://cdn.jsdelivr.net/gh/$_REPO_NAME@$RELEASE_BRANCH/luci-app-openclash/root/usr/share/openclash/res/Disney_Plus_Domains.list"
+	RULE_FILE_PATH="$_RES_PATH/res/Disney_Plus_Domains.list"
+	RULE_FILE_NAME="Disney_Plus_Domains"
+	RULE_TYPE="disney"
+elif ! grep -qs "$RULE_FILE_NAME" "$_RES_PATH/res/rule_providers.list"; then
+	DOWNLOAD_PATH="$(grep -sF "$RULE_FILE_NAME" "$_RES_PATH/res/game_rules.list" | awk -F ',' '{print $2}')"
+	RULE_FILE_PATH="$_CFG_PATH/game_rules/$RULE_FILE_NAME"
+	RULE_TYPE="game"
+else
+	DOWNLOAD_PATH="$(echo "$RULE_FILE_NAME" | awk -F ',' '{print $1$2}')"
+	RULE_FILE_NAME="$(grep -sF "$RULE_FILE_NAME" "$_RES_PATH/res/rule_providers.list" | awk -F ',' '{print $NF}')"
+	RULE_FILE_PATH="$_CFG_PATH/rule_provider/$RULE_FILE_NAME"
+	RULE_TYPE="provider"
+fi
 
-   TMP_RULE_DIR="/tmp/$RULE_FILE_NAME"
-   TMP_RULE_DIR_TMP="/tmp/$RULE_FILE_NAME.tmp"
-   [ "$RULE_TYPE" != "netflix" ] && [ "$RULE_TYPE" != "disney" ] && DOWNLOAD_PATH=$(urlencode "$DOWNLOAD_PATH")
-   
-   if [ "$RULE_TYPE" = "netflix" ]; then
-      curl -sL --connect-timeout 5 --retry 2 "$DOWNLOAD_PATH" -o "$TMP_RULE_DIR" >/dev/null 2>&1
-      if [ "$?" -ne "0" ]; then
-         curl -sL --connect-timeout 5 --retry 2 "$DOWNLOAD_PATH2" -o "$TMP_RULE_DIR" >/dev/null 2>&1
-      fi
-   elif [ "$RULE_TYPE" = "disney" ]; then
-      curl -sL --connect-timeout 5 --retry 2 "$DOWNLOAD_PATH" -o "$TMP_RULE_DIR" >/dev/null 2>&1
-      if [ "$?" -ne "0" ]; then
-         curl -sL --connect-timeout 5 --retry 2 "$DOWNLOAD_PATH2" -o "$TMP_RULE_DIR" >/dev/null 2>&1
-      fi
-   elif [ "$RULE_TYPE" = "game" ]; then
-      if pidof clash >/dev/null; then
-   	     curl -sL --connect-timeout 5 --retry 2 https://raw.githubusercontent.com/FQrabbit/SSTap-Rule/master/rules/"$DOWNLOAD_PATH" -o "$TMP_RULE_DIR" >/dev/null 2>&1
-      fi
-      if [ "$?" -ne "0" ] || ! pidof clash >/dev/null; then
-         curl -sL --connect-timeout 5 --retry 2 https://cdn.jsdelivr.net/gh/FQrabbit/SSTap-Rule@master/rules/"$DOWNLOAD_PATH" -o "$TMP_RULE_DIR" >/dev/null 2>&1
-      fi
-   elif [ "$RULE_TYPE" = "provider" ]; then
-      if pidof clash >/dev/null; then
-   	     curl -sL --connect-timeout 5 --retry 2 https://raw.githubusercontent.com/"$DOWNLOAD_PATH" -o "$TMP_RULE_DIR" >/dev/null 2>&1
-      fi
-      if [ "$?" -ne "0" ] || ! pidof clash >/dev/null; then
-         curl -sL --connect-timeout 5 --retry 2 https://cdn.jsdelivr.net/gh/"$(echo "$DOWNLOAD_PATH" |awk -F '/master' '{print $1}' 2>/dev/null)"@master"$(echo "$DOWNLOAD_PATH" |awk -F 'master' '{print $2}')" -o "$TMP_RULE_DIR" >/dev/null 2>&1
-      fi
-   fi
+[ -n "$DOWNLOAD_PATH" ] || {
+	LOG_OUT "Rule file [$RULE_FILE_NAME] has no valid download url!"
+	LOG_CLEAN
 
-   if [ "$?" -eq "0" ] && [ -s "$TMP_RULE_DIR" ] && [ -z "$(grep "404: Not Found" "$TMP_RULE_DIR")" ] && [ -z "$(grep "Package size exceeded the configured limit" "$TMP_RULE_DIR")" ]; then
-      if [ "$RULE_TYPE" = "game" ]; then
-      	cat "$TMP_RULE_DIR" |sed '/^#/d' 2>/dev/null |sed '/^ *$/d' 2>/dev/null |awk '{print "  - "$0}' > "$TMP_RULE_DIR_TMP" 2>/dev/null
-      	sed -i '1i\payload:' "$TMP_RULE_DIR_TMP" 2>/dev/null
-      	cmp -s "$TMP_RULE_DIR_TMP" "$RULE_FILE_DIR"
-      else
-         cmp -s "$TMP_RULE_DIR" "$RULE_FILE_DIR"
-      fi
-         if [ "$?" -ne "0" ]; then
-            if [ "$RULE_TYPE" = "game" ]; then
-               mv "$TMP_RULE_DIR_TMP" "$RULE_FILE_DIR" >/dev/null 2>&1
-            else
-               mv "$TMP_RULE_DIR" "$RULE_FILE_DIR" >/dev/null 2>&1
-            fi
-            rm -rf "$TMP_RULE_DIR" >/dev/null 2>&1
-            LOG_OUT "Rule File【$RULE_FILE_NAME】Download Successful!" && SLOG_CLEAN
-            return 1
-         else
-            LOG_OUT "Rule File【$RULE_FILE_NAME】No Change, Do Nothing!" && SLOG_CLEAN
-            rm -rf "$TMP_RULE_DIR" >/dev/null 2>&1
-            rm -rf "$TMP_RULE_DIR_TMP" >/dev/null 2>&1
-            return 2
-         fi
-   else
-      rm -rf "$TMP_RULE_DIR" >/dev/null 2>&1
-      LOG_OUT "Rule File【$RULE_FILE_NAME】Download Error!" && SLOG_CLEAN
-      return 0
-   fi
+	exit 0
+}
+
+TMP_RULE_PATH="/tmp/$RULE_FILE_NAME"
+TMP_RULE_PATH_TMP="/tmp/$RULE_FILE_NAME.tmp"
+{ [ "$RULE_TYPE" != "netflix" ] && [ "$RULE_TYPE" != "disney" ]; } && DOWNLOAD_PATH=$(urlencode "$DOWNLOAD_PATH")
+
+if [ "$RULE_TYPE" = "netflix" ] || [ "$RULE_TYPE" = "disney" ]; then
+	for i in "$DOWNLOAD_PATH" "$DOWNLOAD_PATH2"; do
+		CURL_GET_SMALL_FILE "$DOWNLOAD_PATH" -o "$TMP_RULE_PATH" && break
+	done
+elif [ "$RULE_TYPE" = "game" ]; then
+	IS_CLASH_RUNNING && CURL_GET_SMALL_FILE "https://raw.githubusercontent.com/FQrabbit/SSTap-Rule/master/rules/$DOWNLOAD_PATH" -o "$TMP_RULE_PATH" || \
+		CURL_GET_SMALL_FILE "https://cdn.jsdelivr.net/gh/FQrabbit/SSTap-Rule@master/rules/$DOWNLOAD_PATH" -o "$TMP_RULE_PATH"
+elif [ "$RULE_TYPE" = "provider" ]; then
+	IS_CLASH_RUNNING && CURL_GET_SMALL_FILE "https://raw.githubusercontent.com/$DOWNLOAD_PATH" -o "$TMP_RULE_PATH" || \
+		CURL_GET_SMALL_FILE "https://cdn.jsdelivr.net/gh/$(echo "$DOWNLOAD_PATH" | awk -F '/master' '{print $1}')@master$(echo "$DOWNLOAD_PATH" |awk -F 'master' '{print $2}')" -o "$TMP_RULE_PATH"
+fi
+
+if [ "$?" -eq "0" ] && [ -s "$TMP_RULE_PATH" ] && ! grep -qs "404: Not Found" "$TMP_RULE_PATH" && ! grep -qs "Package size exceeded the configured limit" "$TMP_RULE_PATH"; then
+	[ "$RULE_TYPE" != "game" ] || {
+		cat "$TMP_RULE_PATH" 2>"/dev/null" | sed -e '/^#/d' -e '/^ *$/d' | awk '{print "  - "$0}' > "$TMP_RULE_PATH_TMP"
+		sed -i '1i\payload:' "$TMP_RULE_PATH_TMP" 2>"/dev/null"
+		mv -f "$TMP_RULE_PATH_TMP" "$TMP_RULE_PATH" 2>"/dev/null"
+	}
+
+	if ! cmp -s "$TMP_RULE_PATH" "$RULE_FILE_PATH"; then
+		mv -f "$TMP_RULE_PATH" "$RULE_FILE_PATH" 2>"/dev/null"
+
+		LOG_OUT "Rule File [$RULE_FILE_NAME] is updated successfully!"
+		LOG_CLEAN
+
+		exit 1
+	else
+		rm -f "$TMP_RULE_PATH"
+
+		LOG_OUT "Rule File [$RULE_FILE_NAME] is up-to-date!"
+		LOG_CLEAN
+
+		exit 2
+	fi
+else
+	rm -f "$TMP_RULE_PATH"
+
+	LOG_OUT "Rule File [$RULE_FILE_NAME] is failed to download!"
+	LOG_CLEAN
+
+	exit 0
+fi

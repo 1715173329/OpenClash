@@ -1,44 +1,37 @@
 #!/bin/sh
-. /usr/share/openclash/log.sh
+. /usr/share/openclash/openclash_functions.sh
 
-set_lock() {
-   exec 878>"/tmp/lock/openclash_update.lock" 2>/dev/null
-   flock -x 878 2>/dev/null
-}
-
-del_lock() {
-   flock -u 878 2>/dev/null
-   rm -rf "/tmp/lock/openclash_update.lock"
-}
-
-#一键更新
+# 一键更新
 if [ "$1" = "one_key_update" ]; then
-   uci set openclash.config.enable=1
-   uci commit openclash
-   /usr/share/openclash/openclash_core.sh "$1" >/dev/null 2>&1 &
-   /usr/share/openclash/openclash_core.sh "TUN" "$1" >/dev/null 2>&1 &
-   wait
+	uci set "$_CFG_NAME.config.enable"="1"
+	uci commit "$_CFG_NAME"
+	$_RES_PATH/${_GLOBAL_NAME}_core.sh "$1" >"/dev/null" 2>&1 &
+	$_RES_PATH/${_GLOBAL_NAME}_core.sh "TUN" "$1" >"/dev/null" 2>&1 &
+	wait
 fi
 
-LAST_OPVER="/tmp/openclash_last_version"
-LAST_VER=$(sed -n 1p "$LAST_OPVER" 2>/dev/null |sed "s/^v//g" |tr -d "\n")
-OP_CV=$(sed -n 1p /usr/share/openclash/res/openclash_version 2>/dev/null |awk -F '-' '{print $1}' |awk -F 'v' '{print $2}' |awk -F '.' '{print $2$3}' 2>/dev/null)
-OP_LV=$(sed -n 1p $LAST_OPVER 2>/dev/null |awk -F '-' '{print $1}' |awk -F 'v' '{print $2}' |awk -F '.' '{print $2$3}' 2>/dev/null)
-RELEASE_BRANCH=$(uci -q get openclash.config.release_branch || echo "master")
-set_lock
+LAST_OPVER="/tmp/${_GLOBAL_NAME}_last_version"
+LAST_VER="$(sed -n 1p "$LAST_OPVER" 2>"/dev/null" | sed "s/^v//g" | tr -d "\n")"
+OP_CV="$(sed -n 1p "$_RES_PATH/res/openclash_version" 2>"/dev/null" | awk -F '-' '{print $1}' | awk -F 'v' '{print $2}' | awk -F '.' '{print $2$3}')"
+OP_LV="$(sed -n 1p "$LAST_OPVER" 2>"/dev/null" | awk -F '-' '{print $1}' | awk -F 'v' '{print $2}' | awk -F '.' '{print $2$3}')"
 
-if [ "$(expr "$OP_LV" \> "$OP_CV")" -eq 1 ] && [ -f "$LAST_OPVER" ]; then
+config_load "$_CFG_NAME"
+config_get_oc RELEASE_BRANCH "release_branch" "master"
+
+SET_LOCK "878" "_update"
+
+if [ "$(expr "$OP_LV" \> "$OP_CV")" -eq "1" ] && [ -f "$LAST_OPVER" ]; then
    LOG_OUT "Start Downloading【OpenClash - v$LAST_VER】..."
    if [ "$RELEASE_BRANCH" = "dev" ]; then
-      curl -sL -m 10 --retry 2 https://raw.githubusercontent.com/vernesong/OpenClash/"$RELEASE_BRANCH"/luci-app-openclash_"$LAST_VER"_all.ipk -o /tmp/openclash.ipk >/dev/null 2>&1
+      CURL_GET_CORE "$_REPO_URL_RAW_PREFIX/$RELEASE_BRANCH/luci-app-openclash_$LAST_VER_all.ipk" -o /tmp/openclash.ipk
    else
-      if pidof clash >/dev/null; then
-         curl -sL -m 10 --retry 2 https://github.com/vernesong/OpenClash/releases/download/v"$LAST_VER"/luci-app-openclash_"$LAST_VER"_all.ipk -o /tmp/openclash.ipk >/dev/null 2>&1
+      if pidof clash >"/dev/null"; then
+         CURL_GET_CORE "$_REPO_URL_PREFIX/releases/download/v$LAST_VER/luci-app-openclash_$LAST_VER_all.ipk" -o /tmp/openclash.ipk
       fi
    fi
    
-   if [ "$?" -ne "0" ] || ! pidof clash >/dev/null; then
-      curl -sL -m 10 --retry 2 https://cdn.jsdelivr.net/gh/vernesong/OpenClash@"$RELEASE_BRANCH"/luci-app-openclash_"$LAST_VER"_all.ipk -o /tmp/openclash.ipk >/dev/null 2>&1
+   if [ "$?" -ne "0" ] || ! pidof clash >"/dev/null"; then
+      CURL_GET_CORE "https://cdn.jsdelivr.net/gh/$_REPO_NAME@$RELEASE_BRANCH/luci-app-openclash_$LAST_VER_all.ipk" -o /tmp/openclash.ipk
    fi
    
    if [ "$?" -eq "0" ] && [ -s "/tmp/openclash.ipk" ]; then
@@ -47,8 +40,8 @@ if [ "$(expr "$OP_LV" \> "$OP_CV")" -eq 1 ] && [ -f "$LAST_OPVER" ]; then
       if [ "$?" -ne "0" ]; then
          LOG_OUT "【OpenClash - v$LAST_VER】Pre Update Test Failed, The File is Saved in /tmp/opencrash.ipk, Please Try to Update Manually!"
          sleep 3
-         SLOG_CLEAN
-         del_lock
+         LOG_CLEAN
+         DEL_LOCK "878" "_update"
          exit 0
       fi
       LOG_OUT "【OpenClash - v$LAST_VER】Pre Update Test Passed, Ready to Update and Please Do not Refresh The Page and Other Operations..."
@@ -66,7 +59,7 @@ LOG_OUT()
 	fi
 }
 
-SLOG_CLEAN()
+LOG_CLEAN()
 {
 	echo "" > $START_LOG
 }
@@ -78,16 +71,16 @@ opkg remove --force-depends --force-remove luci-app-openclash
 LOG_OUT "Installing The New Version, Please Do Not Refresh The Page or Do Other Operations..."
 opkg install /tmp/openclash.ipk
 if [ "$?" -eq "0" ]; then
-   rm -rf /tmp/openclash.ipk >/dev/null 2>&1
+   rm -rf /tmp/openclash.ipk >"/dev/null" 2>&1
    LOG_OUT "OpenClash Update Successful, About To Restart!"
    sleep 3
    uci set openclash.config.enable=1
    uci commit openclash
-   /etc/init.d/openclash restart 2>/dev/null
+   /etc/init.d/openclash restart 2>"/dev/null"
 else
    LOG_OUT "OpenClash Update Failed, The File is Saved in /tmp/openclash.ipk, Please Try to Update Manually!"
    sleep 3
-   SLOG_CLEAN
+   LOG_CLEAN
 fi
 EOF
    chmod 4755 /tmp/openclash_update.sh
@@ -96,29 +89,29 @@ EOF
    rm -rf /tmp/openclash_update.sh
    else
       LOG_OUT "【OpenClash - v$LAST_VER】Download Failed, Please Check The Network or Try Again Later!"
-      rm -rf /tmp/openclash.ipk >/dev/null 2>&1
+      rm -rf /tmp/openclash.ipk >"/dev/null" 2>&1
       sleep 3
-      SLOG_CLEAN
-      if [ "$(uci get openclash.config.config_reload 2>/dev/null)" -eq 0 ]; then
+      LOG_CLEAN
+      if [ "$(uci get openclash.config.config_reload 2>"/dev/null")" -eq 0 ]; then
          uci set openclash.config.config_reload=1
          uci commit openclash
-      	 /etc/init.d/openclash restart 2>/dev/null
+      	 /etc/init.d/openclash restart 2>"/dev/null"
       fi
    fi
 else
    if [ ! -f "$LAST_OPVER" ]; then
       LOG_OUT "Failed to Get Version Information, Please Try Again Later..."
       sleep 3
-      SLOG_CLEAN
+      LOG_CLEAN
    else
       LOG_OUT "OpenClash Has not Been Updated, Stop Continuing!"
       sleep 3
-      SLOG_CLEAN
+      LOG_CLEAN
    fi
-   if [ "$(uci get openclash.config.config_reload 2>/dev/null)" -eq 0 ]; then
+   if [ "$(uci get openclash.config.config_reload 2>"/dev/null")" -eq 0 ]; then
       uci set openclash.config.config_reload=1
       uci commit openclash
-      /etc/init.d/openclash restart 2>/dev/null
+      /etc/init.d/openclash restart 2>"/dev/null"
    fi
 fi
-del_lock
+DEL_LOCK "878" "_update"

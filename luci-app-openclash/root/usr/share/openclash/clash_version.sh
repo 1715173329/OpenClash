@@ -1,31 +1,28 @@
 #!/bin/sh
+. /usr/share/openclash/openclash_functions.sh
 
-set_lock() {
-   exec 884>"/tmp/lock/openclash_clash_version.lock" 2>/dev/null
-   flock -x 884 2>/dev/null
-}
-
-del_lock() {
-   flock -u 884 2>/dev/null
-   rm -rf "/tmp/lock/openclash_clash_version.lock"
-}
-
-CKTIME=$(date "+%Y-%m-%d-%H")
+CKTIME="$(date "+%Y-%m-%d-%H")"
 LAST_OPVER="/tmp/clash_last_version"
-RELEASE_BRANCH=$(uci -q get openclash.config.release_branch || echo "master")
-set_lock
 
-if [ "$CKTIME" != "$(grep "CheckTime" $LAST_OPVER 2>/dev/null |awk -F ':' '{print $2}')" ]; then
-	 if pidof clash >/dev/null; then
-      curl -sL --connect-timeout 5 --retry 2 https://raw.githubusercontent.com/vernesong/OpenClash/"$RELEASE_BRANCH"/core_version -o $LAST_OPVER >/dev/null 2>&1
-   fi
-   if [ "$?" -ne "0" ] || ! pidof clash >/dev/null; then
-      curl -sL --connect-timeout 5 --retry 2 https://cdn.jsdelivr.net/gh/vernesong/OpenClash@"$RELEASE_BRANCH"/core_version -o $LAST_OPVER >/dev/null 2>&1
-   fi
-   if [ "$?" -eq "0" ] && [ -s "$LAST_OPVER" ]; then
-      echo "CheckTime:$CKTIME" >>$LAST_OPVER
-   else
-      rm -rf $LAST_OPVER
-   fi
+config_load "$_CFG_NAME"
+config_get_oc RELEASE_BRANCH "release_branch" "master"
+
+SET_LOCK "884" "_clash_version"
+
+if [ "$CKTIME" != "$(awk -F 'CheckTime: ' '{print $2}' "$LAST_OPVER" 2>"/dev/null" | xargs)" ]; then
+	if pidof clash >"/dev/null"; then
+		CURL_GET_SMALL_FILE "https://raw.githubusercontent.com/vernesong/OpenClash/$RELEASE_BRANCH/core_version" -o "$LAST_OPVER"
+	fi
+
+	if [ "$?" -ne "0" ] || ! pidof clash >"/dev/null"; then
+		CURL_GET_SMALL_FILE "https://cdn.jsdelivr.net/gh/vernesong/OpenClash@$RELEASE_BRANCH/core_version" -o "$LAST_OPVER"
+	fi
+
+	if [ "$?" -eq "0" ] && [ -s "$LAST_OPVER" ]; then
+		echo -e "CheckTime: $CKTIME" >> "$LAST_OPVER"
+	else
+		rm -rf "$LAST_OPVER"
+	fi
 fi
-del_lock
+
+DEL_LOCK "884" "_clash_version"

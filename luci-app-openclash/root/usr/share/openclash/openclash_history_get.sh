@@ -1,63 +1,47 @@
 #!/bin/sh
-. /lib/functions.sh
-. /usr/share/openclash/openclash_ps.sh
+. /etc/openwrt_release
+. /usr/share/openclash/openclash_functions.sh
 
-set_lock() {
-   exec 881>"/tmp/lock/openclash_history_get.lock" 2>/dev/null
-   flock -x 881 2>/dev/null
-}
-
-del_lock() {
-   flock -u 881 2>/dev/null
-   rm -rf "/tmp/lock/openclash_history_get.lock"
-}
-
-close_all_conection() {
-   SECRET=$(uci -q get openclash.config.dashboard_password)
-   LAN_IP=$(uci -q get network.lan.ipaddr |awk -F '/' '{print $1}' 2>/dev/null || ip addr show 2>/dev/null | grep -w 'inet' | grep 'global' | grep 'brd' | grep -Eo 'inet [0-9\.]+' | awk '{print $2}' | head -n 1)
-   PORT=$(uci -q get openclash.config.cn_port)
-   curl -m 2 -H "Authorization: Bearer ${SECRET}" -H "Content-Type:application/json" -X DELETE http://"$LAN_IP":"$PORT"/connections >/dev/null 2>&1
-}
+config_load "$_CFG_NAME"
 
 if [ "$1" = "close_all_conection" ]; then
-   close_all_conection
-   exit 0
+	local SECRET PORT LAN_IP
+	config_get_oc SECRET "dashboard_password"
+	config_get_oc PORT cn_port
+	LAN_IP=$(uci -q get network.lan.ipaddr | awk -F '/' '{print $1}' || ip addr show | grep -w 'inet' | grep 'global' | grep 'brd' | grep -Eo 'inet [0-9\.]+' | awk '{print $2}' | head -n 1)
+	CURL_SILENT -m 2 -H "Authorization: Bearer ${SECRET}" -H "Content-Type:application/json" -X DELETE "http://$LAN_IP:$PORT/connections"
+	exit 0
 fi
 
-CONFIG_FILE=$(unify_ps_cfgname)
-CONFIG_NAME=$(echo "$CONFIG_FILE" |awk -F '/' '{print $4}' 2>/dev/null)
-small_flash_memory=$(uci -q get openclash.config.small_flash_memory)
-HISTORY_PATH_OLD="/etc/openclash/history/${CONFIG_NAME%.*}"
-HISTORY_PATH="/etc/openclash/history/${CONFIG_NAME%.*}.db"
-core_version=$(uci -q get openclash.config.core_version || echo 0)
-CACHE_PATH_OLD="/etc/openclash/.cache"
-source "/etc/openwrt_release"
+config_get_oc core_version "" "0"
+config_get_oc small_flash_memory
 
-set_lock
+CONFIG_FILE="$(PS_CFGNAME)"
+CONFIG_NAME=$(echo "$CONFIG_FILE" | awk -F '/' '{print $4}')
+HISTORY_PATH_OLD="$_CFG_PATH/history/${CONFIG_NAME%.*}"
+HISTORY_PATH="$_CFG_PATH/history/${CONFIG_NAME%.*}.db"
+CACHE_PATH_OLD="$_CFG_PATH/.cache"
+
+SET_LOCK "881" "_history_get"
 
 if [ -z "$CONFIG_FILE" ] || [ ! -f "$CONFIG_FILE" ]; then
-   CONFIG_FILE=$(uci get openclash.config.config_path 2>/dev/null)
-   CONFIG_NAME=$(echo "$CONFIG_FILE" |awk -F '/' '{print $5}' 2>/dev/null)
-   HISTORY_PATH_OLD="/etc/openclash/history/${CONFIG_NAME%.*}"
-   HISTORY_PATH="/etc/openclash/history/${CONFIG_NAME%.*}.db"
+	config_get_oc CONFIG_FILE "config_path"
+	CONFIG_NAME="$(echo "$CONFIG_FILE" |awk -F '/' '{print $5}')"
+	HISTORY_PATH_OLD="$_CFG_PATH/history/${CONFIG_NAME%.*}"
+	HISTORY_PATH="$_CFG_PATH/history/${CONFIG_NAME%.*}.db"
 fi
 
-if [ -n "$(pidof clash)" ] && [ -f "$CONFIG_FILE" ]; then
-   if [ "$small_flash_memory" == "1" ] || [ -n "$(echo $core_version |grep mips)" ] || [ -n "$(echo $DISTRIB_ARCH |grep mips)" ] || [ -n "$(opkg status libc 2>/dev/null |grep 'Architecture' |awk -F ': ' '{print $2}' |grep mips)" ]; then
-   CACHE_PATH="/tmp/etc/openclash/cache.db"
-      if [ -f "$CACHE_PATH" ]; then
-         cmp -s "$CACHE_PATH" "$HISTORY_PATH"
-         if [ "$?" -ne "0" ]; then
-            cp "$CACHE_PATH" "$HISTORY_PATH" 2>/dev/null
-         fi
-      fi
-   fi
-   if [ -f "$CACHE_PATH_OLD" ]; then
-      cmp -s "$CACHE_PATH_OLD" "$HISTORY_PATH_OLD"
-      if [ "$?" -ne "0" ]; then
-         cp "$CACHE_PATH_OLD" "$HISTORY_PATH_OLD" 2>/dev/null
-      fi
-   fi
+if IS_CLASH_RUNNING && [ -f "$CONFIG_FILE" ]; then
+	if [ "$small_flash_memory" -eq "1" ] || echo "$core_version" | grep -q "mips" || echo "$DISTRIB_ARCH" | grep -q "mips"; then
+		CACHE_PATH="/tmp${_CFG_PATH}/cache.db"
+		if [ -f "$CACHE_PATH" ]; then
+			cmp -s "$CACHE_PATH" "$HISTORY_PATH" || cp -f "$CACHE_PATH" "$HISTORY_PATH" 2>"/dev/null"
+		fi
+	fi
+
+	if [ -f "$CACHE_PATH_OLD" ]; then
+		cmp -s "$CACHE_PATH_OLD" "$HISTORY_PATH_OLD" || cp -f "$CACHE_PATH_OLD" "$HISTORY_PATH_OLD" 2>"/dev/null"
+	fi
 fi
 
-del_lock
+DEL_LOCK "881" "_history_get"
